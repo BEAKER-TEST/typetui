@@ -51,8 +51,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                 }
 
                 match app.state {
-                    AppState::Waiting | AppState::Running => match key.code {
-                        KeyCode::Esc => return Ok(()),
+                    AppState::Menu => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => app.menu_up(),
+                        KeyCode::Down | KeyCode::Char('j') => app.menu_down(),
+                        KeyCode::Left | KeyCode::Char('h') => app.menu_left(),
+                        KeyCode::Right | KeyCode::Char('l') => app.menu_right(),
+                        KeyCode::Enter => app.menu_select(),
+                        KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
+                        _ => {}
+                    }
+                    AppState::Running => match key.code {
+                        KeyCode::Esc => app.reset(),
                         KeyCode::Char(' ') => app.on_space(),
                         KeyCode::Char(c) => app.on_char(c),
                         KeyCode::Backspace => app.on_backspace(),
