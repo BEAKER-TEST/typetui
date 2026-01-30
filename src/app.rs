@@ -79,6 +79,8 @@ pub struct Stats {
     pub total_chars_typed: usize,
     /// Number of correctly typed characters.
     pub correct_chars: usize,
+    /// WPM history over time (sampled at each word completion).
+    pub wpm_history: Vec<u64>,
 }
 
 // =============================================================================
@@ -109,6 +111,8 @@ pub struct App {
     pub total_chars_typed: usize,
     /// Total correctly typed characters.
     pub correct_chars: usize,
+    /// WPM history sampled at each word completion.
+    pub wpm_history: Vec<u64>,
     /// When the test started (first character typed).
     pub start_time: Option<Instant>,
     /// Duration limit for timed mode.
@@ -143,6 +147,7 @@ impl App {
             words_with_errors: Vec::new(),
             total_chars_typed: 0,
             correct_chars: 0,
+            wpm_history: Vec::new(),
             start_time: None,
             duration: Duration::from_secs(30),
             state: AppState::Menu,
@@ -275,6 +280,7 @@ impl App {
         self.words_with_errors.clear();
         self.total_chars_typed = 0;
         self.correct_chars = 0;
+        self.wpm_history.clear();
         self.start_time = None;
         self.duration = Duration::from_secs(self.time_seconds() as u64);
         self.state = AppState::Running;
@@ -290,6 +296,7 @@ impl App {
         self.words_with_errors.clear();
         self.total_chars_typed = 0;
         self.correct_chars = 0;
+        self.wpm_history.clear();
         self.start_time = None;
         self.state = AppState::Menu;
         self.menu_field = MenuField::Mode;
@@ -391,6 +398,15 @@ impl App {
             self.words_with_errors.push(self.current_word_idx);
         }
 
+        // Record current WPM for the history
+        if let Some(start) = self.start_time {
+            let elapsed_mins = start.elapsed().as_secs_f64() / 60.0;
+            if elapsed_mins > 0.0 {
+                let current_wpm = (self.correct_chars as f64 / 5.0) / elapsed_mins;
+                self.wpm_history.push(current_wpm.round() as u64);
+            }
+        }
+
         self.current_word_idx += 1;
         self.typed_input.clear();
         self.current_word_has_error = false;
@@ -464,6 +480,7 @@ impl App {
             words_with_errors: self.words_with_errors.len(),
             total_chars_typed: self.total_chars_typed,
             correct_chars: self.correct_chars,
+            wpm_history: self.wpm_history.clone(),
         }
     }
 

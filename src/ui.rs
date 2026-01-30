@@ -6,14 +6,15 @@
 //! - Results screen with statistics
 
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Bar, BarChart, BarGroup, Block, Borders, Paragraph, Sparkline},
     Frame,
 };
 
-use crate::app::{App, AppState, CharResult, MenuField, TestMode, TIME_OPTIONS, WORD_OPTIONS};
+use crate::app::{App, AppState, CharResult, MenuField, Stats, TestMode, TIME_OPTIONS, WORD_OPTIONS};
 
 // =============================================================================
 // Constants
@@ -459,20 +460,160 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 // Results Screen
 // =============================================================================
 
-/// Renders the results screen with test statistics.
+/// Renders the results screen with test statistics and visualizations.
 fn draw_results_screen(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let stats = app.calculate_stats();
 
+    // Main layout
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),  // Top padding
+            Constraint::Length(8),  // WPM sparkline
+            Constraint::Length(1),  // Spacer
+            Constraint::Length(6),  // Bar chart
+            Constraint::Length(1),  // Spacer
+            Constraint::Min(8),     // Stats text
+            Constraint::Length(2),  // Help text
+        ])
+        .split(area);
+
+    // Horizontal centering for content
+    let content_width = 60u16.min(area.width.saturating_sub(4));
+    let h_padding = (area.width.saturating_sub(content_width)) / 2;
+
+    let centered_area = |chunk: Rect| -> Rect {
+        Rect::new(
+            chunk.x + h_padding,
+            chunk.y,
+            content_width,
+            chunk.height,
+        )
+    };
+
+    // WPM over time sparkline
+    draw_wpm_sparkline(frame, &stats, centered_area(chunks[1]));
+
+    // Bar chart for WPM and Accuracy
+    draw_stats_bars(frame, &stats, centered_area(chunks[3]));
+
+    // Stats text
+    draw_stats_text(frame, &stats, centered_area(chunks[5]));
+
+    // Help text
+    let help = Paragraph::new(Line::from(Span::styled(
+        "Press 'r' to return to menu | Press 'q' to quit",
+        style_label(),
+    )))
+    .alignment(Alignment::Center);
+    frame.render_widget(help, chunks[6]);
+}
+
+/// Renders the WPM sparkline showing typing speed over time.
+fn draw_wpm_sparkline(frame: &mut Frame, stats: &Stats, area: Rect) {
+    let data: &[u64] = if stats.wpm_history.is_empty() {
+        &[stats.wpm.round() as u64]
+    } else {
+        &stats.wpm_history
+    };
+
+    let max_wpm = data.iter().max().copied().unwrap_or(1).max(1);
+    let min_wpm = data.iter().min().copied().unwrap_or(0);
+    let avg_wpm: f64 = if data.is_empty() {
+        0.0
+    } else {
+        data.iter().sum::<u64>() as f64 / data.len() as f64
+    };
+
+    let title = format!(
+        "WPM Over Time (min: {} | avg: {:.0} | max: {})",
+        min_wpm, avg_wpm, max_wpm
+    );
+
+    let sparkline = Sparkline::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_alignment(Alignment::Center),
+        )
+        .data(data)
+        .max(max_wpm + 10)
+        .style(Style::default().fg(Color::Cyan))
+        .bar_set(symbols::bar::NINE_LEVELS);
+
+    frame.render_widget(sparkline, area);
+}
+
+/// Renders bar charts for WPM and Accuracy.
+fn draw_stats_bars(frame: &mut Frame, stats: &Stats, area: Rect) {
+    // Normalize WPM to 0-100 scale (assuming max 150 WPM is excellent)
+    let wpm_normalized = ((stats.wpm / 150.0) * 100.0).min(100.0) as u64;
+    let accuracy_value = stats.accuracy.round() as u64;
+
+    let wpm_color = if stats.wpm >= 80.0 {
+        Color::Green
+    } else if stats.wpm >= 50.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let accuracy_color = if stats.accuracy >= 95.0 {
+        Color::Green
+    } else if stats.accuracy >= 85.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    let bar_chart = BarChart::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Performance")
+                .title_alignment(Alignment::Center),
+        )
+        .bar_width(12)
+        .bar_gap(3)
+        .group_gap(3)
+        .bar_style(Style::default().fg(Color::Cyan))
+        .value_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+        .label_style(Style::default().fg(Color::White))
+        .data(
+            BarGroup::default().bars(&[
+                Bar::default()
+                    .value(wpm_normalized)
+                    .label(Line::from(format!("{:.0} WPM", stats.wpm)))
+                    .style(Style::default().fg(wpm_color)),
+                Bar::default()
+                    .value(accuracy_value)
+                    .label(Line::from(format!("{:.1}%", stats.accuracy)))
+                    .style(Style::default().fg(accuracy_color)),
+            ]),
+        )
+        .max(100);
+
+    frame.render_widget(bar_chart, area);
+}
+
+/// Renders the statistics text.
+fn draw_stats_text(frame: &mut Frame, stats: &Stats, area: Rect) {
     let text = vec![
         Line::from(""),
-        stat_line("WPM: ", format!("{:.0}", stats.wpm), Color::Cyan),
-        Line::from(""),
-        stat_line("Accuracy: ", format!("{:.1}%", stats.accuracy), Color::Green),
-        Line::from(""),
-        stat_line("Total Errors: ", format!("{}", stats.total_errors), Color::Red),
-        Line::from(""),
-        stat_line("Words with mistakes: ", format!("{}", stats.words_with_errors), Color::Red),
+        Line::from(vec![
+            Span::raw("Total Errors: "),
+            Span::styled(
+                format!("{}", stats.total_errors),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    Words with mistakes: "),
+            Span::styled(
+                format!("{}", stats.words_with_errors),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(""),
         Line::from(vec![
             Span::raw("Characters: "),
@@ -485,34 +626,20 @@ fn draw_results_screen(frame: &mut Frame, app: &App) {
                 format!("{}", stats.total_chars_typed),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
+            Span::raw(" correct"),
         ]),
         Line::from(""),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press 'r' to return to menu | Press 'q' to quit",
-            style_label(),
-        )),
     ];
 
-    let results = Paragraph::new(text)
+    let paragraph = Paragraph::new(text)
         .alignment(Alignment::Center)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Results")
+                .title("Details")
                 .title_alignment(Alignment::Center),
         );
 
-    frame.render_widget(results, area);
+    frame.render_widget(paragraph, area);
 }
 
-/// Helper to create a statistics line with colored value.
-fn stat_line(label: &str, value: String, color: Color) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(label.to_string()),
-        Span::styled(
-            value,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-    ])
-}
